@@ -21,6 +21,7 @@ async function events(response){assert.equal(response.status,200);return (await 
 test('HTTP: 两家服务商均跑通高级离线编排并保存配置、日志和历史',async(t)=>{
  const {start}=await fixture(t);const {url}=await start();
  const config=await(await fetch(url+'/api/config')).json();assert.equal(config.workflow.parallelPlanning,true);assert.ok(config.providers.deepseek);
+ const view=await fetch(url+'/code/view-state.mjs');assert.equal(view.status,200);assert.match(view.headers.get('content-type'),/javascript/);
  for(const provider of ['qwen','deepseek']){
   const trace=await events(await request(url,'/api/run',{provider,task:'完整演示',demo:true,workflow:{...config.workflow,forceRevisionDemo:true,maxRounds:2}}));
   const state=trace.at(-1).state;assert.equal(state.status,'completed');assert.equal(state.provider,provider);assert.ok(state.outputs.testplan);assert.ok(state.outputs.review);
