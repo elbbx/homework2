@@ -1,1 +1,1 @@
-{"name":"homework2-workflow","private":true,"type":"module","scripts":{"start":"node --env-file-if-exists=.env server.mjs","test":"node --test workflow.test.mjs providers.test.mjs","test:live":"node --env-file-if-exists=.env live-test.mjs"},"engines":{"node":">=22"}}
+{"name":"homework2-workflow","private":true,"type":"module","scripts":{"start":"node --env-file-if-exists=.env server.mjs","test":"node --test workflow.test.mjs providers.test.mjs advanced.test.mjs server.test.mjs","test:live":"node --env-file-if-exists=.env live-test.mjs"},"engines":{"node":">=22"}}
