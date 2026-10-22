@@ -11,6 +11,9 @@ const {executionConfig,needsBackendRestart}=viewState;
 let customTools;
 try{customTools=await import('./custom-config.mjs');}catch(error){document.getElementById('status').textContent='请重启启动.cmd以加载自定义编排后端';document.getElementById('run').disabled=true;throw error;}
 const {validateCustomConfig,customTemplate}=customTools;
+let canvasTools;
+try{canvasTools=await import('./graph-canvas.mjs');}catch(error){document.getElementById('status').textContent='请重启启动.cmd以加载拖拽画布';throw error;}
+const {renderGraphCanvas}=canvasTools;
 const $=id=>document.getElementById(id);
 const names={requirements:'需求分析',design:'架构设计',testplan:'测试规划',code:'编码实现',review:'审查决策'};
 const roles={requirements:'需求 Agent',design:'设计 Agent',testplan:'设计 Agent · 并行任务',code:'编码 Agent',review:'设计 Agent · 审查任务'};
@@ -63,7 +66,7 @@ function renderGraph(){
  $('graph-context').textContent=state.id||Object.keys(state.outputs||{}).length?(state.config?'画布显示本次运行的实际编排；上方修改仅在新建运行时生效。':'此记录来自旧版顺序流程，仅包含需求、设计、编码三个节点。'):'画布预览当前编排，点击运行后按此配置执行。';
  const graph=$('flow');graph.replaceChildren();
  if(config.kind==='custom'){
-  const shown=new Set();while(shown.size<config.nodes.length){const layer=config.nodes.filter(n=>!shown.has(n.id)&&n.dependsOn.every(id=>shown.has(id)));if(!layer.length)break;const row=make('div',undefined,'custom-level');for(const n of layer){const button=nodeButton(n.id);button.append(make('span','上游：'+(n.dependsOn.map(id=>names[id]).join('、')||'用户输入')));if(n.type==='review')button.append(make('span',`拒绝返工至${names[n.retryTarget]}，最多${n.maxRounds}轮`));row.append(button);}graph.append(row);for(const n of layer)shown.add(n.id);}
+  renderGraphCanvas(graph,config,{editable:!running&&!state.id&&!Object.keys(state.outputs||{}).length,status:nodeStatus,message:configMessage,onSelect:id=>{tab=id;show();},onChange:next=>{customDraft=next;renderCustomEditor();customChanged();},onEdit:()=>{if(running)return;customDraft=structuredClone(config);state={outputs:{},messages:[],events:[]};liveStatuses={};$('status').textContent='编辑新流程';renderCustomEditor();show();}});
  }else{
  graph.append(nodeButton('requirements'),make('div','→','arrow'));
  const lane=make('div',undefined,'lane');lane.append(nodeButton('design'));if(config.parallelPlanning)lane.append(nodeButton('testplan'));graph.append(lane,make('div','→','arrow'),nodeButton('code'));

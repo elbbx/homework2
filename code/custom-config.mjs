@@ -9,6 +9,7 @@ export function validateCustomConfig(value){
   if(typeof n.role!=='string'||!n.role.trim()||n.role.length>80)throw Error('请填写节点角色');
   if(!['agent','review'].includes(n.type)||!Array.isArray(n.dependsOn)||n.dependsOn.some(x=>typeof x!=='string'))throw Error('节点类型或依赖格式错误');
   const node={id:n.id,name:n.name.trim(),role:n.role.trim(),type:n.type,prompt:n.prompt.trim(),dependsOn:[...new Set(n.dependsOn)]};
+  if(n.position!==undefined){if(!n.position||!Number.isFinite(n.position.x)||!Number.isFinite(n.position.y)||n.position.x<0||n.position.y<0||n.position.x>4000||n.position.y>3000)throw Error('节点位置坐标无效');node.position={x:n.position.x,y:n.position.y};}
   if(n.type==='review'){
    if(typeof n.retryTarget!=='string'||!n.retryTarget)throw Error('审查节点必须选择返工目标');
    const maxRounds=Number(n.maxRounds??3);if(!Number.isInteger(maxRounds)||maxRounds<1||maxRounds>5)throw Error('审查轮数必须为1至5');
