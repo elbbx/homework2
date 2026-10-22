@@ -25,11 +25,13 @@ export async function workflow({task, call, emit=()=>{}, initial, signal}) {
   }
   state.status='completed';delete state.error;state.completedAt=new Date().toISOString();emit({type:'completed',state});return state;
 }
-export async function qwen(agent,input,{key,model,base,emit=()=>{},signal}){
+export async function callModel(agent,input,{key,model,base,provider='qwen',emit=()=>{},signal}){
   for(let attempt=0;attempt<3;attempt++){
     try{
-      const response=await fetch(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:'system',content:agent.prompt},{role:'user',content:input}],temperature:0.3,max_tokens:5000,enable_thinking:false}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000)});
-      if(!response.ok){const error=new Error(`千问接口 HTTP ${response.status}。请检查 Key、地域、工作空间及模型权限。`);error.retry=response.status===429||response.status>=500;throw error;}
+      const payload={model,messages:[{role:'system',content:agent.prompt},{role:'user',content:input}],temperature:0.3,max_tokens:5000};
+      if(provider==='qwen')payload.enable_thinking=false;
+      const response=await fetch(base.replace(/\/+$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000)});
+      if(!response.ok){const error=new Error(`${provider==='deepseek'?'DeepSeek':'千问'}接口 HTTP ${response.status}。请检查对应服务商的Key、额度及模型权限。`);error.retry=response.status===429||response.status>=500;throw error;}
       const data=await response.json();
       if(data.choices?.[0]?.finish_reason==='length')throw new Error('输出达到长度上限，请缩小需求后重试');
       if(data.usage)emit({type:'usage',agent:agent.id,usage:data.usage});
@@ -37,6 +39,8 @@ export async function qwen(agent,input,{key,model,base,emit=()=>{},signal}){
     }catch(error){if(signal?.aborted||attempt===2||error.retry===false||(!error.retry&&error.name!=='TimeoutError'&&error.name!=='TypeError'))throw error;emit({type:'retry',agent:agent.id,attempt:attempt+1});await new Promise(r=>setTimeout(r,1000*2**attempt));}
   }
 }
+// Backward compatible named export for existing callers.
+export const qwen=callModel;
 export function demo(agent,input){
  const task=JSON.parse(input).task;
  const outputs={requirements:`# 需求分析（离线示例）\n原始需求：${task}\n\n以下固定示例演示待办清单流程，不代表模型对当前需求的真实分析。\n\n- 添加、查看、完成待办事项\n- 空标题拒绝添加\n- 验收：添加一项后可列出，完成后状态改变。`,design:'# 系统设计（离线示例）\n使用Python标准库。Todo类维护任务列表，add校验标题，complete根据编号修改状态，list返回列表。验收覆盖空标题与未知编号。',code:'# 编码结果（离线示例，未执行）\n```python\nclass Todo:\n    def __init__(self):\n        self.tasks = []\n\n    def add(self, title):\n        if not title.strip():\n            raise ValueError("标题不能为空")\n        item = {"id": len(self.tasks)+1, "title": title.strip(), "done": False}\n        self.tasks.append(item)\n        return item.copy()\n\n    def complete(self, task_id):\n        for item in self.tasks:\n            if item["id"] == task_id:\n                item["done"] = True\n                return\n        raise ValueError("任务不存在")\n\n    def list(self):\n        return [item.copy() for item in self.tasks]\n\nif __name__ == "__main__":\n    todo = Todo()\n    todo.add("完成软件工程作业")\n    todo.complete(1)\n    print(todo.list())\n```\n保存为todo.py，使用 python todo.py 运行。'};

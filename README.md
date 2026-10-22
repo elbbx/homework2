@@ -1,15 +1,14 @@
 # Homework 2：Mini SE 多 Agent 工作流
 
-## 作业解读
-依据 Homework 2-Temp.pptx 第2至4页：至少两个Agent完成完整流程，支持Agent间消息传递或状态共享、顺序执行。评分为流程完整性40%、协作30%、可扩展性20%、文档10%。提交物在模板中仍为“待补充”，具体提交格式请以教师后续通知为准。Homework 1 只是前序单Agent项目参考，本项目按Homework 2重新实现。
+## 项目说明
 
-本实现选用模板中的“需求 → 设计 → 代码”，包含3个不同系统Prompt的Agent。真实模式分别调用千问API，演示模式使用明确标记的固定待办示例。
+本实现选用模板中的“需求 → 设计 → 代码”，包含3个不同系统Prompt的Agent。真实模式调用所选服务商的API，演示模式使用明确标记的固定待办示例。
 
 ## 快速运行
 安装Node.js 22或更新版本，无需npm install。
 
 最方便的方式：双击根目录的 `启动.cmd`，保持终端窗口打开，然后访问 http://127.0.0.1:3000 。
-首次从仓库下载后，可以勾选“离线演示”直接体验，无需API Key。真实调用需要自己的千问Key，填写到网页，或将 `code/.env.example` 复制为 `code/.env` 并配置。页面显示“服务端已配置 API Key”时可以留空Key输入框。请勿将 `.env` 放入提交压缩包或上传仓库。
+首次从仓库下载后，可以勾选“离线演示”直接体验，无需API Key。真实调用需要所选服务商的Key，填写到网页，或将 `code/.env.example` 复制为 `code/.env` 并配置。页面显示“服务端已配置 API Key”时可以留空Key输入框。请勿将 `.env` 放入提交压缩包或上传仓库。
 
 ```powershell
 cd homework2/code
@@ -56,13 +55,19 @@ flowchart LR
     S -.读取.-> C
 ```
 
-## 千问配置
-在网页API Key框填入自己的Key，然后运行。Key随请求仅发送到本机服务，由服务访问千问，不写入源码、浏览器存储或导出数据。
+## 模型配置：千问与DeepSeek
+网页中选择服务商后，模型名称自动切换。填入该服务商的API Key即可运行，两家密钥不能混用。
 
-也可以将code/.env.example复制为code/.env并填入Key，启动脚本自动加载。不要提交.env。支持DASHSCOPE_API_KEY、QWEN_MODEL、QWEN_BASE_URL及PORT环境变量。
-默认模型qwen-plus，默认北京兼容接口。工作空间Key若需要专属域名，请按控制台配置QWEN_BASE_URL（以/compatible-mode/v1结尾，不包含/chat/completions）。地域与Key必须匹配。
+| 服务商 | 默认模型 | 默认接口地址 | 环境变量 |
+| --- | --- | --- | --- |
+| 千问 | qwen-plus | https://dashscope.aliyuncs.com/compatible-mode/v1 | DASHSCOPE_API_KEY |
+| DeepSeek | deepseek-chat | https://api.deepseek.com | DEEPSEEK_API_KEY |
 
-接口依据：https://www.alibabacloud.com/help/en/model-studio/model-calling-in-sub-workspace
+模型名称可按账号的可用模型修改。也可以复制code/.env.example为code/.env并分别配置两家的Key；LLM_PROVIDER指定默认服务商（qwen或deepseek）。支持QWEN_MODEL、QWEN_BASE_URL、DEEPSEEK_MODEL、DEEPSEEK_BASE_URL和PORT。自定义接口地址需使用HTTPS，填写基础地址，不包含/chat/completions。千问工作空间域名按控制台填写。
+
+切换服务商会清空网页中临时输入的Key，避免混用。服务端只读取当前服务商对应的Key，不会把千问密钥发送到DeepSeek。历史记录保存服务商，恢复时必须使用相同服务商和模型。Key不会写入历史、报告或仓库。
+
+接口参考：[千问官方文档](https://www.alibabacloud.com/help/en/model-studio/model-calling-in-sub-workspace)、[DeepSeek官方文档](https://api-docs.deepseek.com/zh-cn/)。
 
 ## 演示流程
 1. 勾选离线演示，运行默认待办需求。
@@ -103,13 +108,9 @@ flowchart LR
 ## 测试记录
 2026-10-22，qwen-plus真实三Agent调用成功，总耗时42.528秒，共3810 Tokens。原始结果保存在code/test-results/live-result.json，不含Key。人工检查并提取生成的summarize.py和test_summarize.py后，独立运行6个Python unittest测试全部通过。模型文本中提到“9个测试”，实际执行数为6，以本地实测为准。
 
-`npm test`：4个工作流测试通过，覆盖交接顺序、失败恢复、停止恢复和空输出。HTTP集成检查覆盖页面资源、历史保存、空输入400、并发409、跨站403和停止恢复。网页已通过实际点击验证离线工作流。
+`npm test`：9个测试通过，覆盖交接顺序、失败恢复、停止恢复、空输出、服务商配置、密钥隔离、两家请求协议及鉴权失败。HTTP集成检查覆盖页面资源、历史保存、空输入400、并发409、跨站403和停止恢复。两家服务商的离线流程与配置接口已通过集成检查。千问统一接口已真实验证成功；DeepSeek未配置真实密钥，当前通过模拟接口验证协议，不代表已完成真实DeepSeek调用。
 
-在code目录执行 `npm run test:live` 可重新发起3次真实千问请求，并更新test-results/live-result.json，会消耗API额度。
+在code目录执行 `npm run test:live` 可重新发起3次所选服务商的真实请求，并更新test-results/live-result.json，会消耗API额度。
 
 建议提交源码、README、DESIGN和一次真实运行的结果及截图；录屏可演示输入、运行、交接和产物。此为准备建议，模板尚未公布最终提交物。
 
-## 自动检查与提交内容
-GitHub Actions在push和pull request时运行4个工作流测试和6个Python示例测试，不调用模型、不需要配置仓库密钥。真实API测试只在本机手动执行。
-
-仓库包含源码、配置示例、设计与使用文档、真实运行结果和截图。`.env`、本地密钥笔记、运行历史、缓存均排除在版本控制之外。实验结果仅记录当次实测，未来模型输出可能不同。

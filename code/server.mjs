@@ -1,8 +1,8 @@
 import http from 'node:http';
 import {spawn} from 'node:child_process';
 import {readFile,mkdir,writeFile,rename} from 'node:fs/promises';
-import {workflow,qwen,demo} from './workflow.mjs';
-const base=(process.env.QWEN_BASE_URL||'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/,'');
+import {workflow,callModel,demo} from './workflow.mjs';
+import {providers,providerConfig,resolveConfig} from './providers.mjs';
 const storage=new URL('./data/',import.meta.url);
 await mkdir(storage,{recursive:true});
 let history=[];
@@ -16,7 +16,7 @@ const server=http.createServer(async(req,res)=>{
  if(req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`){json(res,403,{error:'不允许跨站请求'});return;}
  if(req.method==='GET'&&(req.url==='/'||req.url==='/index.html')){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(await readFile(new URL('../index.html',import.meta.url)));return;}
  if(req.method==='GET'&&(req.url==='/app.js'||req.url==='/code/app.js')){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});res.end(await readFile(new URL('./app.js',import.meta.url)));return;}
- if(req.method==='GET'&&req.url==='/api/config'){json(res,200,{hasKey:!!process.env.DASHSCOPE_API_KEY,model:process.env.QWEN_MODEL||'qwen-plus',busy});return;}
+ if(req.method==='GET'&&req.url==='/api/config'){json(res,200,{provider:process.env.LLM_PROVIDER||'qwen',providers:Object.fromEntries(Object.keys(providers).map(id=>{const c=providerConfig(id);return [id,{name:c.name,model:c.model,hasKey:!!c.key}];})),busy});return;}
  if(req.method==='GET'&&req.url==='/api/history'){json(res,200,history);return;}
  if(req.method==='POST'&&req.url==='/api/cancel'){controller?.abort(new Error('用户停止执行'));json(res,200,{ok:true});return;}
  if(req.method!=='POST'||req.url!=='/api/run'){json(res,404,{error:'未找到接口'});return;}
@@ -26,23 +26,20 @@ const server=http.createServer(async(req,res)=>{
  try{
   const data=await body(req);
   if(typeof data.task!=='string'||!data.task.trim()||data.task.length>8000)throw Error('请输入1至8000字需求');
-  const key=data.key||process.env.DASHSCOPE_API_KEY;
-  if(!data.demo&&!key)throw Error('请填写API Key，或配置DASHSCOPE_API_KEY');
-  const model=data.model||process.env.QWEN_MODEL||'qwen-plus';
-  if(typeof model!=='string'||model.length>100)throw Error('模型名称无效');
+  const {key,model,base,provider}=resolveConfig(data);
   const initial=data.resume?history.find(x=>x.id===data.resumeId)||last:null;
-  if(data.resume&&(!initial||initial.task!==data.task||!['failed','cancelled'].includes(initial.status)||initial.demo!==!!data.demo||initial.model!==model))throw Error('请选择相同需求、模式和模型的未完成记录进行恢复');
+  if(data.resume&&(!initial||initial.task!==data.task||!['failed','cancelled'].includes(initial.status)||initial.demo!==!!data.demo||initial.model!==model||(initial.provider||'qwen')!==provider))throw Error('请选择相同需求、模式、服务商和模型的未完成记录进行恢复');
   controller=new AbortController();const signal=controller.signal;
   res.on('close',()=>{if(!res.writableEnded)controller?.abort(new Error('客户端连接已断开'));});
   res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','Cache-Control':'no-store'});
   const usage=structuredClone(initial?.usage||{});
   const emit=e=>{
    if(e.type==='usage')usage[e.agent]=e.usage;
-   if(e.state){e.state.demo=!!data.demo;e.state.model=model;e.state.usage=structuredClone(usage);}
+   if(e.state){e.state.demo=!!data.demo;e.state.model=model;e.state.provider=provider;e.state.usage=structuredClone(usage);}
    if(!res.destroyed)res.write(JSON.stringify(e)+'\n');
   };
-  last=await workflow({task:data.task,initial,signal,emit,call:async(a,input)=>data.demo?(await new Promise(r=>setTimeout(r,700)),demo(a,input)):qwen(a,input,{key,model,base,emit,signal})});
-  last.demo=!!data.demo;last.model=model;last.usage=usage;
+  last=await workflow({task:data.task,initial,signal,emit,call:async(a,input)=>data.demo?(await new Promise(r=>setTimeout(r,700)),demo(a,input)):callModel(a,input,{key,model,base,provider,emit,signal})});
+  last.demo=!!data.demo;last.model=model;last.provider=provider;last.usage=usage;
   await save(last);res.end();
  }catch(e){if(!res.headersSent)json(res,400,{error:e.message});else if(!res.destroyed)res.end(JSON.stringify({type:'error',error:e.message})+'\n');}finally{busy=false;controller=null;}
 });
