@@ -1,3 +1,4 @@
+import {validateCustomConfig} from './custom-config.mjs';
 export const defaultWorkflowConfig = Object.freeze({
  parallelPlanning:true,
  reviewEnabled:true,
@@ -7,6 +8,7 @@ export const defaultWorkflowConfig = Object.freeze({
 });
 
 export function validateWorkflowConfig(value){
+ if(value?.kind==='custom')return validateCustomConfig(value);
  if(value===undefined||value===null)value={};
  if(typeof value!=='object'||Array.isArray(value))throw Error('工作流配置必须是对象');
  const known=['parallelPlanning','reviewEnabled','maxRounds','forceRevisionDemo','agentPrompts'];

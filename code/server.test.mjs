@@ -22,6 +22,9 @@ test('HTTP: 两家服务商均跑通高级离线编排并保存配置、日志�
  const {start}=await fixture(t);const {url}=await start();
  const config=await(await fetch(url+'/api/config')).json();assert.equal(config.workflow.parallelPlanning,true);assert.ok(config.providers.deepseek);
  const view=await fetch(url+'/code/view-state.mjs');assert.equal(view.status,200);assert.match(view.headers.get('content-type'),/javascript/);
+ assert.equal(config.customWorkflow,true);assert.equal((await fetch(url+'/code/custom-config.mjs')).status,200);
+ const custom={kind:'custom',nodes:[{id:'analyze',name:'分析',role:'分析Agent',prompt:'分析输入',type:'agent',dependsOn:[]},{id:'document',name:'文档',role:'文档Agent',prompt:'输出说明',type:'agent',dependsOn:['analyze']}]};
+ const customTrace=await events(await request(url,'/api/run',{task:'自定义流程',demo:true,workflow:custom}));assert.equal(customTrace.at(-1).state.status,'completed');assert.ok(customTrace.at(-1).state.outputs.document);assert.equal(customTrace.at(-1).state.config.kind,'custom');
  for(const provider of ['qwen','deepseek']){
   const trace=await events(await request(url,'/api/run',{provider,task:'完整演示',demo:true,workflow:{...config.workflow,forceRevisionDemo:true,maxRounds:2}}));
   const state=trace.at(-1).state;assert.equal(state.status,'completed');assert.equal(state.provider,provider);assert.ok(state.outputs.testplan);assert.ok(state.outputs.review);

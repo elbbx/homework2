@@ -1,4 +1,5 @@
 import {validateWorkflowConfig} from './workflow-config.mjs';
+import {customWorkflow} from './custom-workflow.mjs';
 
 export const agents = [
   {id:'requirements', name:'需求 Agent', prompt:'你是需求分析Agent。将用户需求整理为明确的功能需求、输入输出、边界条件和可验证的验收标准。用中文Markdown输出，不虚构用户背景。'},
@@ -15,6 +16,7 @@ export function parseReview(output){
 }
 
 export async function workflow({task,call,emit=()=>{},initial,signal,config,checkpoint=async()=>{}}){
+ if((config||initial?.config)?.kind==='custom')return customWorkflow({task,call,emit,initial,signal,config,checkpoint,parseReview});
  // Calls without an explicit configuration retain the original sequential API.
  const legacy=config===undefined&&!initial?.config;
  const plan=legacy?validateWorkflowConfig({parallelPlanning:false,reviewEnabled:false,maxRounds:1}):validateWorkflowConfig(config??initial.config);
@@ -127,7 +129,7 @@ export async function callModel(agent,input,{key,model,base,provider='qwen',emit
   output+=content;
   if(choice.finish_reason!=='length')return output;
   // Review is a strict JSON decision. Never glue partial JSON into an approval.
-  if(agent.id==='review')throw Error('审查JSON达到输出上限，未采纳不完整决策。请使用简洁的审查指令或调整MAX_OUTPUT_TOKENS后恢复。');
+  if(agent.id==='review'||agent.nodeType==='review')throw Error('审查JSON达到输出上限，未采纳不完整决策。请使用简洁的审查指令或调整MAX_OUTPUT_TOKENS后恢复。');
   if(chunk===2)throw Error('输出在两次自动续写后仍未完成，未采纳截断产物。请在附加指令中要求精简输出，或按模型能力调整MAX_OUTPUT_TOKENS后恢复。');
   emit({type:'continuation',agent:agent.id,attempt:chunk+1,maxTokens});
   // Keep the exact partial answer so continuation can complete a line or code fence.
@@ -139,6 +141,7 @@ export async function callModel(agent,input,{key,model,base,provider='qwen',emit
 export const qwen=callModel;
 export function demo(agent,input){
  const context=JSON.parse(input),task=context.task;
+ if(agent.custom){if(agent.nodeType==='review')return JSON.stringify(context.config.forceRevisionDemo&&context.round===1?{approved:false,issues:['离线示例：请根据反馈补充说明。']}:{approved:true,issues:[]});return `# ${agent.name}（离线固定示例）\n角色：${agent.role}\n原始需求：${task}\n读取上游：${Object.keys(context.upstream).join('、')||'无'}\n当前轮次：${context.round}\n此内容仅验证编排，不是真实模型产物。`;}
  if(agent.id==='testplan')return '# 测试计划（离线固定示例）\n- 空标题应抛出ValueError\n- 添加任务后可查询完整列表\n- 已存在编号可标记完成\n- 不存在编号应抛出ValueError\n此示例未执行代码，真实模式需独立验收。';
  if(agent.id==='review')return JSON.stringify(context.config?.forceRevisionDemo&&context.round===1?{approved:false,issues:['离线审查模拟：请补充空标题与不存在编号的边界处理说明。']}:{approved:true,issues:[]});
  const outputs={requirements:`# 需求分析（离线示例）\n原始需求：${task}\n\n以下固定示例演示待办清单流程，不代表模型对当前需求的真实分析。\n\n- 添加、查看、完成待办事项\n- 空标题拒绝添加\n- 验收：添加一项后可列出，完成后状态改变。`,design:'# 系统设计（离线示例）\n使用Python标准库。Todo类维护任务列表，add校验标题，complete根据编号修改状态，list返回列表。验收覆盖空标题与未知编号。',code:'# 编码结果（离线示例，未执行）\n```python\nclass Todo:\n    def __init__(self):\n        self.tasks = []\n\n    def add(self, title):\n        if not title.strip():\n            raise ValueError("标题不能为空")\n        item = {"id": len(self.tasks)+1, "title": title.strip(), "done": False}\n        self.tasks.append(item)\n        return item.copy()\n\n    def complete(self, task_id):\n        for item in self.tasks:\n            if item["id"] == task_id:\n                item["done"] = True\n                return\n        raise ValueError("任务不存在")\n\n    def list(self):\n        return [item.copy() for item in self.tasks]\n\nif __name__ == "__main__":\n    todo = Todo()\n    todo.add("完成软件工程作业")\n    todo.complete(1)\n    print(todo.list())\n```\n保存为todo.py，使用 python todo.py 运行。'};

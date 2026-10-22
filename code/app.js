@@ -8,38 +8,67 @@ catch(error){
  throw error;
 }
 const {executionConfig,needsBackendRestart}=viewState;
+let customTools;
+try{customTools=await import('./custom-config.mjs');}catch(error){document.getElementById('status').textContent='请重启启动.cmd以加载自定义编排后端';document.getElementById('run').disabled=true;throw error;}
+const {validateCustomConfig,customTemplate}=customTools;
 const $=id=>document.getElementById(id);
 const names={requirements:'需求分析',design:'架构设计',testplan:'测试规划',code:'编码实现',review:'审查决策'};
 const roles={requirements:'需求 Agent',design:'设计 Agent',testplan:'设计 Agent · 并行任务',code:'编码 Agent',review:'设计 Agent · 审查任务'};
+const baseNames={...names},baseRoles={...roles};
 const defaultConfig={parallelPlanning:true,reviewEnabled:true,maxRounds:2,forceRevisionDemo:false,agentPrompts:{}};
-const configIds=['parallel-planning','review-enabled','max-rounds','force-revision','prompt-requirements','prompt-design','prompt-code','save-config','export-config','import-config','reset-config','simple-config'];
+const configIds=['workflow-kind','add-node','parallel-planning','review-enabled','max-rounds','force-revision','prompt-requirements','prompt-design','prompt-code','save-config','export-config','import-config','reset-config','simple-config'];
 const storageKey='se-flow-workflow-config-v1';
 let state={outputs:{},messages:[],events:[]},tab='requirements',running=false,histories=[],liveStatuses={},usageEvents={},serverDefaults=structuredClone(defaultConfig),backendCompatible=false;
 let providerSettings={qwen:{name:'千问',model:'qwen-plus',hasKey:false},deepseek:{name:'DeepSeek',model:'deepseek-chat',hasKey:false}};
+let customDraft=customTemplate();
+function bindNodeNames(config){Object.assign(names,baseNames);Object.assign(roles,baseRoles);if(config.kind==='custom')for(const n of config.nodes){names[n.id]=n.name;roles[n.id]=n.role;}}
 const templates={todo:'用 Python 标准库实现一个命令行待办清单，支持添加、查看和完成任务，JSON文件持久化，拒绝空标题，处理不存在的编号。代码不超过150行。',grade:'用 Python 实现学生成绩统计，支持输入姓名和0到100的成绩，计算平均分、最高分、最低分，处理空数据及非法成绩。代码不超过100行。',expense:'用 Python 实现命令行记账工具，支持添加金额和分类，按分类统计支出，保存到JSON文件，校验金额为正数。代码不超过120行。'};
 function cleanConfig(value){
+ if(value?.kind==='custom')return validateCustomConfig(value);
  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('编排必须是JSON对象');
  const maxRounds=Number(value.maxRounds??2);if(!Number.isInteger(maxRounds)||maxRounds<1||maxRounds>3)throw Error('编码轮数必须是1至3的整数');
  for(const key of ['parallelPlanning','reviewEnabled','forceRevisionDemo'])if(value[key]!==undefined&&typeof value[key]!=='boolean')throw Error(key+'必须为布尔值');
  const prompts={};for(const role of ['requirements','design','code']){const text=value.agentPrompts?.[role]??'';if(typeof text!=='string'||text.length>4000)throw Error('Agent指令必须是4000字以内的文本');if(text.trim())prompts[role]=text.trim();}
  return {parallelPlanning:value.parallelPlanning??true,reviewEnabled:value.reviewEnabled??true,maxRounds,forceRevisionDemo:value.forceRevisionDemo??false,agentPrompts:prompts};
 }
-function readConfig(){return cleanConfig({parallelPlanning:$('parallel-planning').checked,reviewEnabled:$('review-enabled').checked,maxRounds:Number($('max-rounds').value),forceRevisionDemo:$('force-revision').checked,agentPrompts:{requirements:$('prompt-requirements').value,design:$('prompt-design').value,code:$('prompt-code').value}});}
-function writeConfig(value){const c=cleanConfig(value);$('parallel-planning').checked=c.parallelPlanning;$('review-enabled').checked=c.reviewEnabled;$('max-rounds').value=c.maxRounds;$('force-revision').checked=c.forceRevisionDemo;for(const role of ['requirements','design','code'])$('prompt-'+role).value=c.agentPrompts[role]||'';syncMode();renderGraph();}
+function readConfig(){if($('workflow-kind').value==='custom')return cleanConfig(customDraft);return cleanConfig({parallelPlanning:$('parallel-planning').checked,reviewEnabled:$('review-enabled').checked,maxRounds:Number($('max-rounds').value),forceRevisionDemo:$('force-revision').checked,agentPrompts:{requirements:$('prompt-requirements').value,design:$('prompt-design').value,code:$('prompt-code').value}});}
+function writeConfig(value){const c=cleanConfig(value);$('workflow-kind').value=c.kind==='custom'?'custom':'preset';if(c.kind==='custom'){customDraft=structuredClone(c);renderCustomEditor();}else{$('parallel-planning').checked=c.parallelPlanning;$('review-enabled').checked=c.reviewEnabled;$('max-rounds').value=c.maxRounds;$('force-revision').checked=c.forceRevisionDemo;for(const role of ['requirements','design','code'])$('prompt-'+role).value=c.agentPrompts[role]||'';}syncEditorMode();syncMode();renderGraph();}
+function syncEditorMode(){$('preset-editor').classList.toggle('visually-hidden',$('workflow-kind').value==='custom');$('custom-editor').classList.toggle('visually-hidden',$('workflow-kind').value!=='custom');}
 function activeConfig(){return executionConfig(state,readConfig());}
-function nodeIds(config){return ['requirements','design',...(config.parallelPlanning?['testplan']:[]),'code',...(config.reviewEnabled?['review']:[])];}
-function syncMode(){if(!$('demo').checked)$('force-revision').checked=false;$('force-revision').disabled=running||!$('demo').checked||!$('review-enabled').checked;$('max-rounds').disabled=running||!$('review-enabled').checked;const c=readConfig();const first=3+(c.parallelPlanning?1:0)+(c.reviewEnabled?1:0),maximum=first+(c.reviewEnabled?(c.maxRounds-1)*2:0);$('calls-hint').textContent=$('demo').checked?'当前离线模式不会调用模型。':`真实模式预计 ${first}${maximum>first?' 至 '+maximum:''} 次模型调用，接口重试可能额外消耗额度。`;}
+function nodeIds(config){return config.kind==='custom'?config.nodes.map(n=>n.id):['requirements','design',...(config.parallelPlanning?['testplan']:[]),'code',...(config.reviewEnabled?['review']:[])];}
+function syncMode(){if(!$('demo').checked){$('force-revision').checked=false;customDraft.forceRevisionDemo=false;}$('force-revision').disabled=running||!$('demo').checked||!$('review-enabled').checked;$('max-rounds').disabled=running||!$('review-enabled').checked;if($('workflow-kind').value==='custom'){$('calls-hint').textContent=$('demo').checked?'自定义离线演示不调用模型。':`自定义流程包含${customDraft.nodes.length}个节点；返工、重试和续写会增加模型调用。`;return;}const c=readConfig();const first=3+(c.parallelPlanning?1:0)+(c.reviewEnabled?1:0),maximum=first+(c.reviewEnabled?(c.maxRounds-1)*2:0);$('calls-hint').textContent=$('demo').checked?'当前离线模式不会调用模型。':`真实模式预计 ${first}${maximum>first?' 至 '+maximum:''} 次模型调用，重试和续写可能增加用量。`;}
 function updateProvider(){const c=providerSettings[$('provider').value];if(!c)return;$('model').value=c.model;$('key').value='';$('key').placeholder=`填入${c.name} API Key，或使用服务端配置`;$('connection').textContent=c.hasKey?`${c.name}：服务端已配置对应Key，可直接运行。`:`${c.name}：请填写该服务商的API Key。`;}
-function lock(value){running=value;for(const id of ['run','task','provider','model','key','demo','template','history',...configIds])$(id).disabled=value;$('run').disabled=value||!backendCompatible;$('stop').disabled=!value;$('resume').disabled=value||!backendCompatible||!['failed','cancelled','interrupted'].includes(state.status);if(!backendCompatible)$('connection').textContent='后端未连接或版本过旧，请关闭旧服务并重新运行启动.cmd。';syncMode();}
+function lock(value){running=value;for(const id of ['run','task','provider','model','key','demo','template','history',...configIds])$(id).disabled=value;for(const el of $('custom-nodes').querySelectorAll('input,select,textarea,button'))el.disabled=value;$('run').disabled=value||!backendCompatible;$('stop').disabled=!value;$('resume').disabled=value||!backendCompatible||!['failed','cancelled','interrupted'].includes(state.status);if(!backendCompatible)$('connection').textContent='后端未连接或版本过旧，请关闭旧服务并重新运行启动.cmd。';syncMode();}
 function make(tag,text,className){const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element;}
+function customChanged(){try{validateCustomConfig(customDraft);configMessage('自定义编排有效，下一次运行将按节点依赖执行。');}catch(e){configMessage(e.message);}syncMode();renderGraph();}
+function renderCustomEditor(){
+ const box=$('custom-nodes');box.replaceChildren();
+ const demoLabel=make('label'),demoCheck=make('input');demoCheck.type='checkbox';demoCheck.checked=!!customDraft.forceRevisionDemo;demoCheck.disabled=running||!$('demo').checked;demoCheck.onchange=()=>{customDraft.forceRevisionDemo=demoCheck.checked;customChanged();};demoLabel.append(demoCheck,document.createTextNode(' 离线演示：首轮审查拒绝，展示自定义返工'));box.append(demoLabel);
+ for(const n of customDraft.nodes){
+  const card=make('div',undefined,'custom-card'),head=make('div',undefined,'toolbar');head.append(make('b',n.id));const remove=make('button','删除节点');remove.disabled=customDraft.nodes.length<=2;remove.onclick=()=>{if(customDraft.nodes.length<=2)return;customDraft.nodes=customDraft.nodes.filter(x=>x.id!==n.id);for(const x of customDraft.nodes){x.dependsOn=x.dependsOn.filter(id=>id!==n.id);if(x.retryTarget===n.id)x.retryTarget='';}renderCustomEditor();customChanged();};head.append(remove);card.append(head);
+  function field(label,key,tag='input'){const wrap=make('label',label),input=make(tag);input.value=n[key]||'';input.maxLength=key==='prompt'?6000:80;if(tag==='textarea')input.rows=3;input.oninput=()=>{n[key]=input.value;customChanged();};wrap.append(input);return wrap;}
+  const fields=make('div',undefined,'custom-fields');fields.append(field('节点名称','name'),field('Agent角色（可自由填写）','role'));card.append(fields,field('节点系统提示词','prompt','textarea'));
+  const typeLabel=make('label','节点类型'),type=make('select');type.add(new Option('普通 Agent','agent'));type.add(new Option('审查分支（JSON决策）','review'));type.value=n.type;type.onchange=()=>{n.type=type.value;if(n.type==='review'){n.retryTarget=n.dependsOn[0]||'';n.maxRounds=3;}else{delete n.retryTarget;delete n.maxRounds;}renderCustomEditor();customChanged();};typeLabel.append(type);card.append(typeLabel,make('p','上游依赖：可多选；无依赖的节点从用户输入开始，同批就绪节点并行。','small'));
+  const deps=make('div',undefined,'custom-deps');for(const other of customDraft.nodes.filter(x=>x.id!==n.id)){const label=make('label'),check=make('input');check.type='checkbox';check.checked=n.dependsOn.includes(other.id);check.onchange=()=>{n.dependsOn=check.checked?[...n.dependsOn,other.id]:n.dependsOn.filter(id=>id!==other.id);customChanged();};label.append(check,document.createTextNode(' '+other.name+' ('+other.id+')'));deps.append(label);}card.append(deps);
+  if(n.type==='review'){const label=make('label','拒绝时返工到上游节点'),target=make('select');target.add(new Option('选择返工目标',''));for(const other of customDraft.nodes.filter(x=>x.id!==n.id))target.add(new Option(other.name+' ('+other.id+')',other.id));target.value=n.retryTarget;target.onchange=()=>{n.retryTarget=target.value;customChanged();};label.append(target);card.append(label);const rounds=make('label','最多审查轮数（1至5）'),input=make('input');input.type='number';input.min=1;input.max=5;input.value=n.maxRounds;input.onchange=()=>{n.maxRounds=Number(input.value);customChanged();};rounds.append(input);card.append(rounds);}
+  box.append(card);
+ }
+ $('add-node').disabled=running||customDraft.nodes.length>=12;
+}
 function nodeStatus(id){const entry=state.nodeStates?.[id];return liveStatuses[id]||(typeof entry==='string'?entry:entry?.status)||((state.outputs||{})[id]?'done':'waiting');}
 function nodeButton(id){const button=make('button',undefined,'node '+nodeStatus(id)+(tab===id?' selected':''));button.id='node-'+id;button.type='button';button.append(make('span',roles[id],'number'),make('strong',names[id]),make('span',({running:'正在执行…',done:'已完成，产物已交接',completed:'已完成，产物已交接',failed:'失败，可恢复',cancelled:'已停止，可恢复',interrupted:'已中断，可恢复',waiting:'等待执行'})[nodeStatus(id)]||nodeStatus(id)));button.onclick=()=>{tab=id;show();};return button;}
 function renderGraph(){
  let config;try{config=activeConfig();}catch{return;}
+ bindNodeNames(config);
  $('graph-context').textContent=state.id||Object.keys(state.outputs||{}).length?(state.config?'画布显示本次运行的实际编排；上方修改仅在新建运行时生效。':'此记录来自旧版顺序流程，仅包含需求、设计、编码三个节点。'):'画布预览当前编排，点击运行后按此配置执行。';
- const graph=$('flow');graph.replaceChildren();graph.append(nodeButton('requirements'),make('div','→','arrow'));
+ const graph=$('flow');graph.replaceChildren();
+ if(config.kind==='custom'){
+  const shown=new Set();while(shown.size<config.nodes.length){const layer=config.nodes.filter(n=>!shown.has(n.id)&&n.dependsOn.every(id=>shown.has(id)));if(!layer.length)break;const row=make('div',undefined,'custom-level');for(const n of layer){const button=nodeButton(n.id);button.append(make('span','上游：'+(n.dependsOn.map(id=>names[id]).join('、')||'用户输入')));if(n.type==='review')button.append(make('span',`拒绝返工至${names[n.retryTarget]}，最多${n.maxRounds}轮`));row.append(button);}graph.append(row);for(const n of layer)shown.add(n.id);}
+ }else{
+ graph.append(nodeButton('requirements'),make('div','→','arrow'));
  const lane=make('div',undefined,'lane');lane.append(nodeButton('design'));if(config.parallelPlanning)lane.append(nodeButton('testplan'));graph.append(lane,make('div','→','arrow'),nodeButton('code'));
  if(config.reviewEnabled){const row=make('div',undefined,'review-row');row.append(nodeButton('review'));const condition=make('div',undefined,'condition');condition.append(make('b','条件分支与循环'),make('div','审查通过 → 完成'),make('div',`审查不通过 → 修复编码 → 再次审查（最多 ${config.maxRounds} 轮）`));row.append(condition);graph.append(row);}
+ }
  const tabs=$('output-tabs');tabs.replaceChildren();for(const id of [...nodeIds(config),'state','trace']){const b=make('button',names[id]||({state:'共享状态',trace:'事件追踪'})[id],tab===id?'active':'');b.dataset.tab=id;b.onclick=()=>{tab=id;show();};tabs.append(b);}
 }
 function show(){
@@ -52,7 +81,7 @@ function show(){
  const config=activeConfig(),ids=nodeIds(config),completed=ids.filter(id=>state.outputs?.[id]).length;
  const round=typeof state.iterations==='number'?state.iterations:(state.iterations?.length||state.round||1);
  $('metrics').textContent=`${completed}/${ids.length} 节点已有产物 · ${seconds.toFixed(1)} 秒（节点累计，含并行） · ${total} Tokens${state.config?.reviewEnabled?' · 编码轮数 '+round:''}${state.demo?' · 离线示例':''}`;
- $('export').disabled=$('report').disabled=!Object.keys(state.outputs||{}).length;$('copy').disabled=$('download').disabled=!state.outputs?.code;renderGraph();
+ $('export').disabled=$('report').disabled=!Object.keys(state.outputs||{}).length;$('copy').disabled=$('download').disabled=!selectedOutput();renderGraph();
 }
 function log(text){const line=make('div',new Date().toLocaleTimeString()+'  '+text);$('log').append(line);$('log').scrollTop=$('log').scrollHeight;}
 function configMessage(text){$('config-message').textContent=text;}
@@ -92,18 +121,21 @@ async function run(resume=false){
  }catch(e){$('status').textContent='运行异常';log(e.message);for(const id of nodeIds(config))if(liveStatuses[id]==='running')liveStatuses[id]='interrupted';}
  finally{lock(false);show();try{await history();}catch(e){log(e.message);}}
 }
-$('provider').onchange=updateProvider;$('demo').onchange=()=>{syncMode();renderGraph();};
+$('provider').onchange=updateProvider;$('demo').onchange=()=>{syncMode();if($('workflow-kind').value==='custom')renderCustomEditor();renderGraph();};
+$('workflow-kind').onchange=()=>{syncEditorMode();renderCustomEditor();customChanged();};
+$('add-node').onclick=()=>{if(customDraft.nodes.length>=12)return;let i=1;while(customDraft.nodes.some(n=>n.id==='step'+i))i++;customDraft.nodes.push({id:'step'+i,name:'自定义节点 '+i,role:'自定义 Agent',prompt:'根据用户任务和上游产物完成当前职责，并输出可交接的结果。',type:'agent',dependsOn:[customDraft.nodes.at(-1).id]});renderCustomEditor();customChanged();};
 $('template').onchange=()=>{if(templates[$('template').value])$('task').value=templates[$('template').value];};
 for(const id of ['parallel-planning','review-enabled','max-rounds','force-revision'])$(id).onchange=()=>{syncMode();renderGraph();configMessage('编排已修改，下一次运行将按当前画布执行。');};
 $('save-config').onclick=()=>{try{localStorage.setItem(storageKey,JSON.stringify(readConfig()));configMessage('编排已保存到本机浏览器，不包含API Key。');}catch(e){configMessage('保存失败：'+e.message);}};
 $('export-config').onclick=()=>{try{download(JSON.stringify(readConfig(),null,2),'workflow-config.json','application/json');}catch(e){configMessage(e.message);}};
-$('import-config').onclick=()=>$('config-file').click();$('config-file').onchange=async()=>{const file=$('config-file').files?.[0];if(!file)return;try{if(file.size>30000)throw Error('编排文件过大');writeConfig(JSON.parse(await file.text()));configMessage('编排已导入，下一次运行使用当前画布。');}catch(e){configMessage('导入失败：'+e.message);}finally{$('config-file').value='';}};
+$('import-config').onclick=()=>$('config-file').click();$('config-file').onchange=async()=>{const file=$('config-file').files?.[0];if(!file)return;try{if(file.size>300000)throw Error('编排文件过大');writeConfig(JSON.parse(await file.text()));configMessage('编排已导入，下一次运行使用当前画布。');}catch(e){configMessage('导入失败：'+e.message);}finally{$('config-file').value='';}};
 $('reset-config').onclick=()=>{writeConfig(serverDefaults);configMessage('已恢复增强流程。');};$('simple-config').onclick=()=>{writeConfig({parallelPlanning:false,reviewEnabled:false,maxRounds:1,forceRevisionDemo:false,agentPrompts:{}});configMessage('已切换为需求、设计、编码顺序执行。');};
 $('history').onchange=()=>{const h=histories.find(item=>item.id===$('history').value);if(!h)return;state=structuredClone(h);liveStatuses={};usageEvents={};$('task').value=h.task;$('demo').checked=!!h.demo;$('provider').value=h.provider||'qwen';updateProvider();$('model').value=h.model;writeConfig(h.config||{parallelPlanning:false,reviewEnabled:false,maxRounds:1,forceRevisionDemo:false,agentPrompts:{}});$('status').textContent='历史记录 · '+h.status;$('log').textContent='';for(const event of h.events||[])log((names[event.agent]||event.agent||'工作流')+' '+event.type+(event.error?'：'+event.error:''));lock(false);show();};
 $('run').onclick=()=>run();$('resume').onclick=()=>run(true);$('stop').onclick=async()=>{try{const response=await fetch('/api/cancel',{method:'POST'});if(!response.ok)throw Error('停止失败');log('已请求停止，等待运行中的节点退出');}catch(e){log(e.message);}};
 $('export').onclick=()=>download(JSON.stringify(state,null,2),'workflow-result.json','application/json');
-$('report').onclick=()=>{const config=state.config||readConfig(),ids=nodeIds(config);const lines=['# Mini SE 工作流实验报告','',`运行ID：${state.id}`,`模式：${state.demo?'离线固定示例':'真实模型调用'}`,`模型：${state.model}`,`状态：${state.status}`,'','## 用户需求',state.task,'','## 编排配置','```json',JSON.stringify(config,null,2),'```','',...ids.flatMap(id=>['## '+names[id],state.outputs?.[id]||'未完成','']),'## 运行统计',$('metrics').textContent,'','## 交接与事件',`消息 ${state.messages?.length||0} 条，事件 ${state.events?.length||0} 条。完整细节见JSON结果。`,'','## 验证说明','本报告记录Agent产物。生成的业务代码尚需独立执行验收。'];download(lines.join('\n'),'实验报告.md','text/markdown');};
-function blocks(){return [...(state.outputs?.code||'').matchAll(/```([^\n]*)\n([\s\S]*?)```/g)].map(match=>({lang:match[1].trim().toLowerCase(),content:match[2]}));}
-$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(state.outputs.code);log('编码产物已复制');}catch{log('复制失败，请手动选择文本复制');}};
+$('report').onclick=()=>{const config=state.config||readConfig(),ids=nodeIds(config);bindNodeNames(config);const lines=['# Mini SE 工作流实验报告','',`运行ID：${state.id}`,`模式：${state.demo?'离线固定示例':'真实模型调用'}`,`模型：${state.model}`,`状态：${state.status}`,'','## 用户需求',state.task,'','## 编排配置','```json',JSON.stringify(config,null,2),'```','',...ids.flatMap(id=>['## '+names[id],state.outputs?.[id]||'未完成','']),'## 运行统计',$('metrics').textContent,'','## 交接与事件',`消息 ${state.messages?.length||0} 条，事件 ${state.events?.length||0} 条。完整细节见JSON结果。`,'','## 验证说明','本报告记录Agent产物。生成的业务代码尚需独立执行验收。'];download(lines.join('\n'),'实验报告.md','text/markdown');};
+function selectedOutput(){return state.outputs?.[tab]||state.outputs?.code||Object.values(state.outputs||{}).at(-1)||'';}
+function blocks(){return [...selectedOutput().matchAll(/```([^\n]*)\n([\s\S]*?)```/g)].map(match=>({lang:match[1].trim().toLowerCase(),content:match[2]}));}
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(selectedOutput());log('当前产物已复制');}catch{log('复制失败，请手动选择文本复制');}};
 $('download').onclick=()=>{const list=blocks().filter(block=>/^(python|py|javascript|js|typescript|ts|html|css|json|bash|sh|sql)$/.test(block.lang));if(!list.length){log('未找到可下载代码块，请导出完整报告');return;}const extensions={python:'py',javascript:'js',typescript:'ts',bash:'sh'};list.forEach((block,index)=>download(block.content,`generated-${index+1}.${extensions[block.lang]||block.lang}`,'text/plain'));log(`已请求下载 ${list.length} 个代码块，请按报告说明命名运行`);};
-(async()=>{try{if(location.protocol==='file:'){$('connection').textContent='静态预览：运行启动.cmd后访问 http://127.0.0.1:3000';}else{const response=await fetch('/api/config');if(!response.ok)throw Error('无法读取服务配置');const config=await response.json();backendCompatible=!needsBackendRestart(config);providerSettings=config.providers||providerSettings;$('provider').value=config.provider||'qwen';serverDefaults=cleanConfig(config.workflow||defaultConfig);updateProvider();await history();if(!backendCompatible)$('status').textContent='后端版本过旧，请重启启动.cmd';}let saved;try{saved=JSON.parse(localStorage.getItem(storageKey)||'null');}catch{}writeConfig(saved||serverDefaults);if(saved)configMessage('已载入本机保存的编排。');lock(false);}catch(e){log('初始化失败：'+e.message);writeConfig(defaultConfig);lock(false);}})();
+(async()=>{try{if(location.protocol==='file:'){$('connection').textContent='静态预览：运行启动.cmd后访问 http://127.0.0.1:3000';}else{const response=await fetch('/api/config');if(!response.ok)throw Error('无法读取服务配置');const config=await response.json();backendCompatible=!needsBackendRestart(config)&&config.customWorkflow===true;providerSettings=config.providers||providerSettings;$('provider').value=config.provider||'qwen';serverDefaults=cleanConfig(config.workflow||defaultConfig);updateProvider();await history();if(!backendCompatible)$('status').textContent='后端版本过旧，请重启启动.cmd';}let saved;try{saved=JSON.parse(localStorage.getItem(storageKey)||'null');}catch{}writeConfig(saved||serverDefaults);if(saved)configMessage('已载入本机保存的编排。');lock(false);}catch(e){log('初始化失败：'+e.message);writeConfig(defaultConfig);lock(false);}})();

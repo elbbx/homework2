@@ -6,7 +6,7 @@ import {providers,providerConfig,resolveConfig} from './providers.mjs';
 import {defaultWorkflowConfig,validateWorkflowConfig} from './workflow-config.mjs';
 
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
-async function body(req){let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>80000)throw Error('请求过大');}return JSON.parse(text);}
+async function body(req){let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>512000)throw Error('请求过大');}return JSON.parse(text);}
 
 export async function createWorkflowServer({storage=new URL('./data/',import.meta.url),env=process.env,modelCall=callModel,demoDelay=500}={}){
  await mkdir(storage,{recursive:true});
@@ -31,7 +31,8 @@ export async function createWorkflowServer({storage=new URL('./data/',import.met
    if(req.method==='GET'&&(req.url==='/'||req.url==='/index.html')){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(await readFile(new URL('../index.html',import.meta.url)));return;}
    if(req.method==='GET'&&(req.url==='/app.js'||req.url==='/code/app.js')){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});res.end(await readFile(new URL('./app.js',import.meta.url)));return;}
    if(req.method==='GET'&&req.url==='/code/view-state.mjs'){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});res.end(await readFile(new URL('./view-state.mjs',import.meta.url)));return;}
-   if(req.method==='GET'&&req.url==='/api/config'){json(res,200,{provider:env.LLM_PROVIDER||'qwen',workflow:defaultWorkflowConfig,providers:Object.fromEntries(Object.keys(providers).map(id=>{const c=providerConfig(id,env);return [id,{name:c.name,model:c.model,hasKey:!!c.key}];})),busy});return;}
+   if(req.method==='GET'&&req.url==='/code/custom-config.mjs'){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});res.end(await readFile(new URL('./custom-config.mjs',import.meta.url)));return;}
+   if(req.method==='GET'&&req.url==='/api/config'){json(res,200,{provider:env.LLM_PROVIDER||'qwen',workflow:defaultWorkflowConfig,customWorkflow:true,providers:Object.fromEntries(Object.keys(providers).map(id=>{const c=providerConfig(id,env);return [id,{name:c.name,model:c.model,hasKey:!!c.key}];})),busy});return;}
    if(req.method==='GET'&&req.url==='/api/history'){json(res,200,history);return;}
    if(req.method==='POST'&&req.url==='/api/cancel'){controller?.abort(new Error('用户停止执行'));json(res,200,{ok:true});return;}
    if(req.method!=='POST'||req.url!=='/api/run'){json(res,404,{error:'未找到接口'});return;}
