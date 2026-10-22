@@ -39,7 +39,7 @@ export async function createWorkflowServer({storage=new URL('./data/',import.met
    try{
     const data=await body(req);
     if(typeof data.task!=='string'||!data.task.trim()||data.task.length>8000)throw Error('请输入1至8000字需求');
-    const {key,model,base,provider}=resolveConfig(data,env);
+    const {key,model,base,provider,maxTokens}=resolveConfig(data,env);
     const initial=data.resume?history.find(x=>x.id===data.resumeId)||last:null;
     if(data.resume&&(!initial||initial.task!==data.task||!['failed','cancelled','interrupted'].includes(initial.status)||initial.demo!==!!data.demo||initial.model!==model||(initial.provider||'qwen')!==provider))throw Error('请选择相同需求、模式、服务商和模型的未完成记录进行恢复');
     const legacy={parallelPlanning:false,reviewEnabled:false,maxRounds:1,forceRevisionDemo:false,agentPrompts:{}};
@@ -61,7 +61,7 @@ export async function createWorkflowServer({storage=new URL('./data/',import.met
     };
     last=await workflow({task:data.task,initial,config,signal,emit,checkpoint:async state=>{decorate(state);await save(state);},call:async(a,input)=>{
      if(data.demo){await delay(demoDelay,undefined,{signal});return demo(a,input);}
-     return modelCall(a,input,{key,model,base,provider,emit,signal});
+     return modelCall(a,input,{key,model,base,provider,maxTokens,emit,signal});
     }});
     decorate(last);await save(last);res.end();
    }catch(e){if(!res.headersSent)json(res,400,{error:e.message});else if(!res.destroyed)res.end(JSON.stringify({type:'error',error:e.message})+'\n');}

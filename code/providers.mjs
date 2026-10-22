@@ -5,7 +5,9 @@ export const providers = {
 export function providerConfig(provider,env=process.env){
  if(!Object.hasOwn(providers,provider))throw Error('请选择千问或DeepSeek');
  const defaults=providers[provider];
- return {provider,name:defaults.name,base:(provider==='qwen'?env.QWEN_BASE_URL:env.DEEPSEEK_BASE_URL)||defaults.base,model:(provider==='qwen'?env.QWEN_MODEL:env.DEEPSEEK_MODEL)||defaults.model,key:(provider==='qwen'?env.DASHSCOPE_API_KEY:env.DEEPSEEK_API_KEY)||''};
+ const maxTokens=Number(env.MAX_OUTPUT_TOKENS||8192);
+ if(!Number.isInteger(maxTokens)||maxTokens<512||maxTokens>32768)throw Error('MAX_OUTPUT_TOKENS必须是512至32768之间的整数，并且不超过所选模型的上限');
+ return {provider,name:defaults.name,base:(provider==='qwen'?env.QWEN_BASE_URL:env.DEEPSEEK_BASE_URL)||defaults.base,model:(provider==='qwen'?env.QWEN_MODEL:env.DEEPSEEK_MODEL)||defaults.model,key:(provider==='qwen'?env.DASHSCOPE_API_KEY:env.DEEPSEEK_API_KEY)||'',maxTokens};
 }
 export function resolveConfig(data,env=process.env){
  const config=providerConfig(data.provider||env.LLM_PROVIDER||'qwen',env);

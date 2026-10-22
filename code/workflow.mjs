@@ -101,19 +101,38 @@ export async function workflow({task,call,emit=()=>{},initial,signal,config,chec
   await persist();event({type:state.status==='cancelled'?'cancelled':'failed',agent:error.agent||state.phase,error:error.message});return state;
  }
 }
-export async function callModel(agent,input,{key,model,base,provider='qwen',emit=()=>{},signal}){
+async function requestModel(agent,messages,{key,model,base,provider,emit,signal,maxTokens}){
   for(let attempt=0;attempt<3;attempt++){
     try{
-      const payload={model,messages:[{role:'system',content:agent.prompt},{role:'user',content:input}],temperature:0.3,max_tokens:5000};
+      const payload={model,messages,temperature:0.3,max_tokens:maxTokens};
       if(provider==='qwen')payload.enable_thinking=false;
       const response=await fetch(base.replace(/\/+$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000)});
       if(!response.ok){const error=new Error(`${provider==='deepseek'?'DeepSeek':'千问'}接口 HTTP ${response.status}。请检查对应服务商的Key、额度及模型权限。`);error.retry=response.status===429||response.status>=500;throw error;}
       const data=await response.json();
-      if(data.choices?.[0]?.finish_reason==='length')throw new Error('输出达到长度上限，请缩小需求后重试');
       if(data.usage)emit({type:'usage',agent:agent.id,usage:data.usage});
-      return data.choices?.[0]?.message?.content;
+      return data.choices?.[0];
     }catch(error){if(signal?.aborted||attempt===2||error.retry===false||(!error.retry&&error.name!=='TimeoutError'&&error.name!=='TypeError'))throw error;emit({type:'retry',agent:agent.id,attempt:attempt+1});await new Promise(r=>setTimeout(r,1000*2**attempt));}
   }
+}
+export async function callModel(agent,input,{key,model,base,provider='qwen',emit=()=>{},signal,maxTokens=8192}){
+ if(!Number.isInteger(maxTokens)||maxTokens<512||maxTokens>32768)throw Error('单次输出Token预算无效');
+ const messages=[{role:'system',content:agent.prompt+'\n\n请简洁交付，避免重复解释或重复代码。编码节点必须优先输出完整源码和必要测试。'},{role:'user',content:input}];
+ let output='';
+ for(let chunk=0;chunk<3;chunk++){
+  signal?.throwIfAborted();
+  const choice=await requestModel(agent,messages,{key,model,base,provider,emit,signal,maxTokens});
+  const content=choice?.message?.content;
+  if(typeof content!=='string'||!content.trim())throw Error(choice?.finish_reason==='length'?'模型已耗尽输出预算但未返回正文，请选择非推理模型或调整MAX_OUTPUT_TOKENS后恢复。':'模型返回空内容');
+  output+=content;
+  if(choice.finish_reason!=='length')return output;
+  // Review is a strict JSON decision. Never glue partial JSON into an approval.
+  if(agent.id==='review')throw Error('审查JSON达到输出上限，未采纳不完整决策。请使用简洁的审查指令或调整MAX_OUTPUT_TOKENS后恢复。');
+  if(chunk===2)throw Error('输出在两次自动续写后仍未完成，未采纳截断产物。请在附加指令中要求精简输出，或按模型能力调整MAX_OUTPUT_TOKENS后恢复。');
+  emit({type:'continuation',agent:agent.id,attempt:chunk+1,maxTokens});
+  // Keep the exact partial answer so continuation can complete a line or code fence.
+  if(messages.at(-1).role==='user'&&messages.length>2)messages.splice(-2,2);
+  messages.push({role:'assistant',content:output},{role:'user',content:'上一条回答因长度限制被截断。请只从中断位置继续剩余内容，不要重复已输出的文字，不要重新开始已有代码块，不要重写文件。补全剩余代码、测试和运行说明后结束。'});
+ }
 }
 // Backward compatible named export for existing callers.
 export const qwen=callModel;

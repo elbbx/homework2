@@ -57,6 +57,7 @@ function receive(event){
  if(event.type==='node-failed'){const entry=state.nodeStates?.[event.agent];liveStatuses[event.agent]=(typeof entry==='string'?entry:entry?.status)||'failed';log(label+round+' 节点退出：'+(event.error||'执行失败'));}
  if(event.type==='usage'){usageEvents[event.agent]=event.usage;}
  if(event.type==='retry')log(label+' 接口重试 '+event.attempt);
+ if(event.type==='continuation')log(label+' 输出较长，正在自动续写（'+event.attempt+'/2）');
  if(event.type==='parallel')log('并行任务：'+(event.message||event.phase||'架构设计与测试规划共同执行'));
  if(event.type==='branch')log('条件分支：'+(event.decision||event.reason||event.message||(event.approved?'审查通过':'需要修复')));
  if(event.type==='loop')log('修复循环：'+(event.message||'进入下一轮编码与审查'));

@@ -10,6 +10,9 @@ test('两家服务商各自选择模型、地址和密钥',()=>{
  assert.equal(d.key,'deepseek-test');assert.equal(d.model,'deepseek-chat');assert.equal(d.base,'https://api.deepseek.com');
  assert.equal(resolveConfig({provider:'deepseek',key:' override ',model:'custom-model'},env).key,'override');
  assert.equal(providerConfig('qwen',{}).model,'qwen-plus');
+ assert.equal(providerConfig('qwen',{}).maxTokens,8192);
+ assert.equal(providerConfig('deepseek',{MAX_OUTPUT_TOKENS:'12000'}).maxTokens,12000);
+ assert.throws(()=>providerConfig('qwen',{MAX_OUTPUT_TOKENS:'invalid'}),/MAX_OUTPUT_TOKENS/);
 });
 test('DeepSeek缺少密钥时不会回退使用千问密钥，非法配置被拒绝',()=>{
  const env={DASHSCOPE_API_KEY:'qwen-only'};
@@ -33,4 +36,21 @@ test('鉴权失败不会重复请求，也不会泄漏密钥',async(t)=>{
  let count=0;t.mock.method(globalThis,'fetch',async()=>{count++;return new Response('unauthorized',{status:401});});
  await assert.rejects(callModel(agents[0],'input',{key:'secret-test',provider:'deepseek',base:'https://api.deepseek.com',model:'deepseek-chat'}),e=>e.message.includes('DeepSeek接口 HTTP 401')&&!e.message.includes('secret-test'));
  assert.equal(count,1);
+});
+test('长输出自动续写后才返回完整产物，保留上下文并累计各段用量',async(t)=>{
+ const bodies=[],events=[];
+ t.mock.method(globalThis,'fetch',async(url,options)=>{bodies.push(JSON.parse(options.body));return new Response(JSON.stringify({choices:[{message:{content:bodies.length===1?'```python\nprint(':'1)\n```'},finish_reason:bodies.length===1?'length':'stop'}],usage:{total_tokens:10}}),{status:200});});
+ const result=await callModel(agents[2],'input',{key:'test',model:'test',base:'https://test.invalid',emit:e=>events.push(e)});
+ assert.equal(result,'```python\nprint(1)\n```');assert.equal(bodies.length,2);
+ assert.equal(bodies[0].max_tokens,8192);assert.equal(bodies[1].messages[2].content,'```python\nprint(');
+ assert.equal(events.filter(e=>e.type==='continuation').length,1);
+ assert.equal(events.filter(e=>e.type==='usage').reduce((n,e)=>n+e.usage.total_tokens,0),20);
+});
+test('连续截断最多续写两次，不能把不完整代码当成成功',async(t)=>{
+ let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:'partial'},finish_reason:'length'}]}),{status:200});});
+ await assert.rejects(callModel(agents[2],'input',{key:'test',model:'test',base:'https://test.invalid'}),/两次自动续写后仍未完成/);assert.equal(calls,3);
+});
+test('截断的审查JSON直接失败，不拼接出伪批准',async(t)=>{
+ let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:'{"approved":'},finish_reason:'length'}]}),{status:200});});
+ await assert.rejects(callModel({...agents[1],id:'review'},'input',{key:'test',model:'test',base:'https://test.invalid'}),/审查JSON达到输出上限/);assert.equal(calls,1);
 });
