@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+code/data/
+/1.txt
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+/homework2-submission.zip
