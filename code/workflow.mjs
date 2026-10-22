@@ -104,7 +104,8 @@ export async function workflow({task,call,emit=()=>{},initial,signal,config,chec
 async function requestModel(agent,messages,{key,model,base,provider,emit,signal,maxTokens}){
   for(let attempt=0;attempt<3;attempt++){
     try{
-      const payload={model,messages,temperature:0.3,max_tokens:maxTokens};
+      const payload={model,messages,temperature:0.3};
+      if(maxTokens!==undefined)payload.max_tokens=maxTokens;
       if(provider==='qwen')payload.enable_thinking=false;
       const response=await fetch(base.replace(/\/+$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000)});
       if(!response.ok){const error=new Error(`${provider==='deepseek'?'DeepSeek':'千问'}接口 HTTP ${response.status}。请检查对应服务商的Key、额度及模型权限。`);error.retry=response.status===429||response.status>=500;throw error;}
@@ -114,8 +115,8 @@ async function requestModel(agent,messages,{key,model,base,provider,emit,signal,
     }catch(error){if(signal?.aborted||attempt===2||error.retry===false||(!error.retry&&error.name!=='TimeoutError'&&error.name!=='TypeError'))throw error;emit({type:'retry',agent:agent.id,attempt:attempt+1});await new Promise(r=>setTimeout(r,1000*2**attempt));}
   }
 }
-export async function callModel(agent,input,{key,model,base,provider='qwen',emit=()=>{},signal,maxTokens=8192}){
- if(!Number.isInteger(maxTokens)||maxTokens<512||maxTokens>32768)throw Error('单次输出Token预算无效');
+export async function callModel(agent,input,{key,model,base,provider='qwen',emit=()=>{},signal,maxTokens}){
+ if(maxTokens!==undefined&&(!Number.isSafeInteger(maxTokens)||maxTokens<1))throw Error('单次输出Token预算必须是正整数或不设置');
  const messages=[{role:'system',content:agent.prompt+'\n\n请简洁交付，避免重复解释或重复代码。编码节点必须优先输出完整源码和必要测试。'},{role:'user',content:input}];
  let output='';
  for(let chunk=0;chunk<3;chunk++){
