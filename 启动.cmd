@@ -1,6 +1,7 @@
 @echo off
-cd /d "%~dp0code"
-set "OPEN_BROWSER=1"
-echo Open http://127.0.0.1:3000 in your browser. Do not open index.html directly.
-node --env-file-if-exists=.env server.mjs
+setlocal
+cd /d "%~dp0"
+echo Starting Homework 2...
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0code\start.ps1"
+if errorlevel 1 echo Startup failed. See the message above.
 pause
